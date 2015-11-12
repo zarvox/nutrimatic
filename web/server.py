@@ -15,6 +15,9 @@ define("port", default=8888, help="run on the given port", type=int)
 define("debug", default=False, help="run in debug mode")
 
 PWD=os.path.dirname(os.path.abspath(__file__))
+GIT_ROOT = os.path.dirname(PWD)
+FIND_EXPR_PATH = os.path.join(GIT_ROOT, "bin", "find-expr")
+INDEX_PATH = os.path.join(GIT_ROOT, "bulk-data", "wikipedia.index")
 
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
@@ -38,17 +41,34 @@ class ConnectionHandle(object):
                 )
 
     def abort_search(self):
-        self.search_handle.abort()
+        if self.search_handle: self.search_handle.abort()
 
-    def search_stopped(self, exit_code):
+    def search_stopped(self, exit_code, abort_message):
         self.search_handle = None
+        # Tell the websocket the search stopped.
+        msg = json.dumps({
+            "method": "search_stopped",
+            "value": {
+                "exit_code": exit_code,
+                "message": abort_message or ""
+            }
+        });
+        self.socket_handler.write_message(msg)
         if self._on_search_stopped: self._on_search_stopped(exit_code)
 
     def search_error(self, message):
         print("Search error:", message)
 
     def search_found_result(self, match, strength):
-        pass
+        print("Found match:", strength, match)
+        msg = json.dumps({
+            "method": "search_result_found",
+            "value": {
+                "strength": strength,
+                "match": match
+            }
+        })
+        self.socket_handler.write_message(msg)
 
 class SearchHandle(object):
     def __init__(self, search_string, add_result_cb=None, on_exit_cb=None, error_cb=None):
@@ -58,28 +78,45 @@ class SearchHandle(object):
         self._error_cb = error_cb
 
         self.aborted = False
-        self.search_depth = 2000000 # TODO: support custom search depth
-        self.max_results = 200 # TODO: support custom result list length?
-        print("should start search for", search_string)
-        # TODO: actually call find-expr
-        # TODO: spawn a subprocess, emit events for certain actions based on the text output
-        # should probably pass in an "on_match" callback and an "on_progress" callback
-        # so we can notify the UI about how far the search has progressed.
-        self.process_handle = tornado.process.Subprocess(["sleep", "3"],
+        self.abort_reason = None
+        self.search_depth = 1000000 # TODO: support custom search depth
+        self.max_results = 100 # TODO: support custom result list length?
+        self.result_count = 0
+
+        # Starts find-expr as a child process, with some supervision.
+        print("starting search for", search_string)
+        self.process_handle = tornado.process.Subprocess([FIND_EXPR_PATH, INDEX_PATH, search_string],
                 preexec_fn=lambda: signal.signal(signal.SIGPIPE, signal.SIG_DFL),
                 stdout=tornado.process.Subprocess.STREAM,
                 stderr=tornado.process.Subprocess.STREAM,
         )
         self.process_handle.set_exit_callback(self.on_child_exit)
-        self.process_handle.stdout.read_until('\n', callback=self.on_stdout_line)
+        self.process_handle.stdout.read_until(b'\n', callback=self.on_stdout_line)
         self.process_handle.stderr.read_until_close(callback=self.on_stderr)
 
     def on_stdout_line(self, data):
-        # TODO: Do something with the line
         print("subprocess stdout:", data)
-        # if self._add_result_cb: self._add_result_cb()
-        # And schedule another read.
-        self.process_handle.stdout.read_until('\n', callback=self.on_stdout_line)
+
+        if data.startswith(b'#'):
+            # Search progress line.
+            search_depth = int(data[2:])
+            # TODO: send progress to client via callback
+            if search_depth > self.search_depth:
+                self.abort("Computation limit reached")
+                return
+        else:
+            # Parse out match and strength, then notify caller
+            strength, match = data.strip().split(b' ', 1)
+            self.result_count = self.result_count + 1
+            if self._add_result_cb: self._add_result_cb(match.decode('utf-8'), float(strength))
+
+        # If we've seen enough results, kill the search
+        if self.result_count >= self.max_results:
+            self.abort("Reached result cap")
+            return
+
+        # Otherwise, schedule another read.
+        self.process_handle.stdout.read_until(b'\n', callback=self.on_stdout_line)
 
     def on_stderr(self, data):
         # Do something with the stderr data.
@@ -91,11 +128,12 @@ class SearchHandle(object):
         print("child process exited", exit_code)
         self.aborted = True
         self.process_handle = None
-        if self._on_exit_cb: self._on_exit_cb(exit_code)
+        if self._on_exit_cb: self._on_exit_cb(exit_code, self.abort_reason)
 
-    def abort(self):
+    def abort(self, reason="no reason given"):
         if not self.aborted:
             self.aborted = True
+            self.abort_reason = reason
             # Reaching into the implementation of tornado's Subprocess, since it
             # doesn't expose kill() directly.
             self.process_handle.proc.kill()
@@ -113,6 +151,8 @@ class Controller(object):
         client.write_message(self.update_search_count_message())
 
     def remove_client(self, client):
+        # Abort any search that client was running.
+        self.connections[client].abort_search()
         del self.connections[client]
         # Notify all connected clients about the removed connection.
         self.update_all_client_count()

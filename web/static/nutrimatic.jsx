@@ -9,7 +9,37 @@ function socketUri() {
     return ws_uri;
 };
 
-// React component
+// React components
+var SearchResults = React.createClass({
+    propTypes: {
+        running: React.PropTypes.bool.isRequired,
+        exit_code: React.PropTypes.number.isRequired,
+        message: React.PropTypes.string.isRequired,
+        results: React.PropTypes.arrayOf(React.PropTypes.shape({
+            score: React.PropTypes.string,
+            text: React.PropTypes.string,
+        })).isRequired,
+        progress: React.PropTypes.number.isRequired,
+    },
+    render: function () {
+
+        var searchBlob = (<li>Search state: { this.props.running ? "running" : "stopped" }</li>);
+
+        var results = [];
+        for (var i = 0 ; i < this.props.results.length ; i++) {
+            var res = this.props.results[i];
+            results.push(<li>{res.text}</li>);
+        }
+        return (<div>
+            {/* TODO: some header information about the search progress - a spinner or clock, maybe? */}
+            <ul>
+                {results}
+            </ul>
+        </div>
+        );
+    },
+});
+
 var Page = React.createClass({
     propTypes: {
         socket: React.PropTypes.object.isRequired,
@@ -19,12 +49,28 @@ var Page = React.createClass({
             clientCount: 0,
             searchCount: 0,
             connState: "disconnected",
+            searchState: {
+                running: false,
+                exit_code: 0,
+                message: "",
+                results: [],
+                progress: 0,
+            }
         };
     },
     startSearch: function (event) {
         event.preventDefault();
         var search_text = this.refs.search.value;
         console.log("start search for " + search_text);
+        this.setState({
+            searchState: {
+                running: true,
+                exit_code: 0,
+                message: "",
+                results: [],
+                progress: 0,
+            }
+        });
         var msg = JSON.stringify({
             method: "start_search",
             value: search_text,
@@ -42,6 +88,7 @@ var Page = React.createClass({
             <input type="text" ref="search"></input>
             <button type="submit" onClick={this.startSearch}>Go</button>
         </form>
+        <SearchResults {...this.state.searchState} />
       </div>
       );
     }
@@ -65,12 +112,33 @@ sock.onopen = function(event) {
 
 sock.onmessage = function (event) {
     var d = JSON.parse(event.data);
-    if (d.method && d.method === "update_client_count") {
-        root.setState({clientCount: d.value});
-    } else if (d.method && d.method === "update_search_count") {
-        root.setState({searchCount: d.value});
-    }
     console.log(event);
+    if (d.method) {
+        if (d.method === "update_client_count") {
+            root.setState({clientCount: d.value});
+        } else if (d.method === "update_search_count") {
+            root.setState({searchCount: d.value});
+        } else if (d.method === "search_result_found") {
+            root.state.searchState.results.push({
+                "score": d.value.strength,
+                "text": d.value.match
+            });
+            root.forceUpdate();
+        } else if (d.method === "search_progress") {
+            // TODO: write backend stuff to propagate this
+            root.state.searchState.progress = d.value;
+            root.forceUpdate();
+        } else if (d.method === "search_stopped") {
+            root.setState({searchState: {
+                    running: false,
+                    exit_code: d.value.exit_code,
+                    message: d.value.message,
+                    results: root.state.searchState.results,
+                    progress: root.state.searchState.progress,
+                }
+            });
+        }
+    }
 };
 
 sock.onerror = function (event) {
