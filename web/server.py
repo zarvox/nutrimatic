@@ -17,7 +17,7 @@ define("debug", default=False, help="run in debug mode")
 PWD=os.path.dirname(os.path.abspath(__file__))
 GIT_ROOT = os.path.dirname(PWD)
 FIND_EXPR_PATH = os.path.join(GIT_ROOT, "bin", "find-expr")
-INDEX_PATH = os.path.join(GIT_ROOT, "bulk-data", "wikipedia.index")
+INDEX_PATH = os.path.join(GIT_ROOT, "wikipedia.index")
 
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
