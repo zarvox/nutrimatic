@@ -9,6 +9,22 @@ function socketUri() {
     return ws_uri;
 };
 
+function queryParams() {
+    var params = {};
+    if (window.location.search.length > 1) {
+        var query = window.location.search.substr(1);
+        var kvs = query.split("&");
+        for (var i = 0 ; i < kvs.length ; i++) {
+            var kv = kvs[i];
+            var pair = kv.split("=", 2);
+            console.log(pair);
+            params[decodeURIComponent(pair[0])] = pair.length > 1 ? decodeURIComponent(pair[1]) : "";
+        }
+    }
+    console.log(params);
+    return params;
+};
+
 // React components
 var SearchResults = React.createClass({
     propTypes: {
@@ -16,25 +32,71 @@ var SearchResults = React.createClass({
         exit_code: React.PropTypes.number.isRequired,
         message: React.PropTypes.string.isRequired,
         results: React.PropTypes.arrayOf(React.PropTypes.shape({
-            score: React.PropTypes.string,
+            score: React.PropTypes.number,
             text: React.PropTypes.string,
         })).isRequired,
         progress: React.PropTypes.number.isRequired,
     },
     render: function () {
-
-        var searchBlob = (<li>Search state: { this.props.running ? "running" : "stopped" }</li>);
-
         var results = [];
         for (var i = 0 ; i < this.props.results.length ; i++) {
             var res = this.props.results[i];
-            results.push(<li>{res.text}</li>);
+            results.push(<li key={i}>{res.text}</li>);
         }
         return (<div>
             {/* TODO: some header information about the search progress - a spinner or clock, maybe? */}
+            <div>{this.props.running ?
+                "searching... (" + this.props.results.length + " matches)" :
+                "search stopped: " + this.props.message
+            }</div>
             <ul>
                 {results}
             </ul>
+        </div>
+        );
+    },
+});
+
+var SyntaxNotes = React.createClass({
+    render: function () {
+        return (<div>
+            <h2>Syntax</h2>
+            <ul>
+                <li><em>a-z, 0-9, space</em> - literal match</li>
+                <li><em>[], (), {}, |, ., ?, *, + -</em> same as regexp</li>
+                <li><em>"expr"</em> - forbid word breaks without a space or hyphen</li>
+                <li><em>expr&expr</em> - both expressions must match</li>
+                <li><em>&lt;aaagmnr>, &lt;(gram)(ana)></em> - anagram of contents</li>
+                <li><em>_ (underscore)</em> - alphanumeric, not space: [a-z0-9]</li>
+                <li><em># (number sign)</em> - digit: [0-9]</li>
+                <li><em>- (hyphen)</em> - optional space: ( ?)</li>
+                <li><em>A</em> - alphabetic: [a-z]</li>
+                <li><em>C</em> - consonant (including y)</li>
+                <li><em>V</em> - vowel ([aeiou], not y)</li>
+            </ul>
+        </div>);
+    },
+});
+
+var ServerStatus = React.createClass({
+    propTypes: {
+        connState: React.PropTypes.string.isRequired,
+        clientCount: React.PropTypes.number.isRequired,
+        searchCount: React.PropTypes.number.isRequired,
+    },
+    render: function () {
+        var styles = {
+          display: "block",
+          width: "30%",
+          float: "right",
+          clear: "none",
+          backgroundColor: "#eeeeee",
+        };
+        return (
+        <div style={styles}>
+            <div>Connection: {this.props.connState}</div>
+            <div>Connected users: {this.props.connState === "connected" ? this.props.clientCount : "<unknown>"}</div>
+            <div>Running searches: {this.props.connState === "connected" ? this.props.searchCount : "<unknown>"}</div>
         </div>
         );
     },
@@ -55,12 +117,16 @@ var Page = React.createClass({
                 message: "",
                 results: [],
                 progress: 0,
-            }
+            },
+            noSearchYet: true,
         };
     },
-    startSearch: function (event) {
+    go: function(event) {
         event.preventDefault();
         var search_text = this.refs.search.value;
+        this.startSearch(search_text);
+    },
+    startSearch: function (search_text) {
         console.log("start search for " + search_text);
         this.setState({
             searchState: {
@@ -69,7 +135,8 @@ var Page = React.createClass({
                 message: "",
                 results: [],
                 progress: 0,
-            }
+            },
+            noSearchYet: false,
         });
         var msg = JSON.stringify({
             method: "start_search",
@@ -77,20 +144,31 @@ var Page = React.createClass({
         });
         this.props.socket.send(msg);
     },
+    setSearchText: function (search_text) {
+        this.refs.search.value = search_text;
+    },
     render: function () {
-      return (
-      <div>
-        <p><em>Almost, but not quite, entirely unlike tea.</em></p>
-        <p>Connection state: {this.state.connState}</p>
-        <p>Connected users: {this.state.clientCount}</p>
-        <p>Running searches: {this.state.searchCount}</p>
-        <form>
-            <input type="text" ref="search"></input>
-            <button type="submit" onClick={this.startSearch}>Go</button>
-        </form>
-        <SearchResults {...this.state.searchState} />
-      </div>
-      );
+        var inputStyles = {
+            height: "32px",
+            fontSize: "16pt",
+            margin: "2px",
+        };
+        var pStyles = {
+            margin: "0px",
+        };
+        return (
+        <div>
+            <ServerStatus connState={this.state.connState}
+                clientCount={this.state.clientCount}
+                searchCount={this.state.searchCount} />
+            <p style={pStyles}><em>Almost, but not quite, entirely unlike tea.</em></p>
+            <form>
+                <input type="text" ref="search" style={inputStyles} autoFocus={true}></input>
+                <button type="submit" onClick={this.go} style={inputStyles}>Go</button>
+            </form>
+            {this.state.noSearchYet ? <SyntaxNotes /> : <SearchResults {...this.state.searchState} />}
+        </div>
+        );
     }
 });
 
@@ -103,11 +181,27 @@ var root = ReactDOM.render(
     document.getElementById('body')
 );
 
+// Fill DOM node with a default value
+var q = queryParams().q;
+if (q) {
+    root.setSearchText(q);
+}
+
+// A boolean so we can autorun searches on first connect
+var firstConnect = true;
+
 sock.onopen = function(event) {
     console.log(event);
     console.log(sock);
     sock.send(JSON.stringify({method:"greeting", value:"Hi there tornado!"}));
     root.setState({connState: "connected"});
+    if (firstConnect) {
+        firstConnect = false;
+        var q = queryParams().q;
+        if (q) {
+            root.startSearch(q)
+        }
+    }
 };
 
 sock.onmessage = function (event) {

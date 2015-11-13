@@ -112,11 +112,12 @@ class SearchHandle(object):
 
         # If we've seen enough results, kill the search
         if self.result_count >= self.max_results:
-            self.abort("Reached result cap")
+            self.abort("Reached {} results".format(self.max_results))
             return
 
         # Otherwise, schedule another read.
-        self.process_handle.stdout.read_until(b'\n', callback=self.on_stdout_line)
+        if not self.aborted:
+            self.process_handle.stdout.read_until(b'\n', callback=self.on_stdout_line)
 
     def on_stderr(self, data):
         # Do something with the stderr data.
@@ -128,6 +129,8 @@ class SearchHandle(object):
         print("child process exited", exit_code)
         self.aborted = True
         self.process_handle = None
+        if exit_code == 0:
+            self.abort_reason = "Completed exhaustive search"
         if self._on_exit_cb: self._on_exit_cb(exit_code, self.abort_reason)
 
     def abort(self, reason="no reason given"):
