@@ -36,6 +36,7 @@ class ConnectionHandle(object):
             self.search_handle.abort()
         self.search_handle = SearchHandle(search_string,
                 add_result_cb=self.search_found_result,
+                progress_cb=self.search_progress,
                 on_exit_cb=self.search_stopped,
                 error_cb=self.search_error,
                 )
@@ -70,10 +71,19 @@ class ConnectionHandle(object):
         })
         self.socket_handler.write_message(msg)
 
+    def search_progress(self, value):
+        msg = json.dumps({
+            "method": "search_progress",
+            "value": value
+        })
+        self.socket_handler.write_message(msg)
+
 class SearchHandle(object):
-    def __init__(self, search_string, add_result_cb=None, on_exit_cb=None, error_cb=None):
+    def __init__(self, search_string, add_result_cb=None, progress_cb=None,
+            on_exit_cb=None, error_cb=None):
         self.search_string = search_string
         self._add_result_cb = add_result_cb
+        self._progress_cb = progress_cb
         self._on_exit_cb = on_exit_cb
         self._error_cb = error_cb
 
@@ -100,7 +110,7 @@ class SearchHandle(object):
         if data.startswith(b'#'):
             # Search progress line.
             search_depth = int(data[2:])
-            # TODO: send progress to client via callback
+            if self._progress_cb: self._progress_cb(search_depth)
             if search_depth > self.search_depth:
                 self.abort("Computation limit reached")
                 return

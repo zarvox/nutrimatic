@@ -28,8 +28,8 @@ function queryParams() {
 // React components
 var SearchResults = React.createClass({
     propTypes: {
-        running: React.PropTypes.bool.isRequired,
-        exit_code: React.PropTypes.number.isRequired,
+        currentState: React.PropTypes.oneOf(["searching", "compiling", "stopped"]).isRequired,
+        exitCode: React.PropTypes.number.isRequired,
         message: React.PropTypes.string.isRequired,
         results: React.PropTypes.arrayOf(React.PropTypes.shape({
             score: React.PropTypes.number,
@@ -43,12 +43,16 @@ var SearchResults = React.createClass({
             var res = this.props.results[i];
             results.push(<li key={i}>{res.text}</li>);
         }
+        var searchInfo;
+        if (this.props.currentState === "searching") {
+            searchInfo = <div>{"searching... (" + this.props.results.length + " matches)"}</div>;
+        } else if (this.props.currentState === "compiling") {
+            searchInfo = <div>compiling query...</div>;
+        } else if (this.props.currentState === "stopped") {
+            searchInfo = <div>{"search stopped: " + this.props.message}</div>;
+        }
         return (<div>
-            {/* TODO: some header information about the search progress - a spinner or clock, maybe? */}
-            <div>{this.props.running ?
-                "searching... (" + this.props.results.length + " matches)" :
-                "search stopped: " + this.props.message
-            }</div>
+            {searchInfo}
             <ul>
                 {results}
             </ul>
@@ -112,8 +116,8 @@ var Page = React.createClass({
             searchCount: 0,
             connState: "disconnected",
             searchState: {
-                running: false,
-                exit_code: 0,
+                currentState: "stopped",
+                exitCode: 0,
                 message: "",
                 results: [],
                 progress: 0,
@@ -130,8 +134,8 @@ var Page = React.createClass({
         console.log("start search for " + search_text);
         this.setState({
             searchState: {
-                running: true,
-                exit_code: 0,
+                currentState: "compiling",
+                exitCode: 0,
                 message: "",
                 results: [],
                 progress: 0,
@@ -220,12 +224,13 @@ sock.onmessage = function (event) {
             root.forceUpdate();
         } else if (d.method === "search_progress") {
             // TODO: write backend stuff to propagate this
+            root.state.searchState.currentState = "searching";
             root.state.searchState.progress = d.value;
             root.forceUpdate();
         } else if (d.method === "search_stopped") {
             root.setState({searchState: {
-                    running: false,
-                    exit_code: d.value.exit_code,
+                    currentState: "stopped",
+                    exitCode: d.value.exit_code,
                     message: d.value.message,
                     results: root.state.searchState.results,
                     progress: root.state.searchState.progress,

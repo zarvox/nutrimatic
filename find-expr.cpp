@@ -50,9 +50,9 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "error: can't open \"%s\"\n", argv[1]);
     return 1;
   }
-
   IndexReader reader(fp);
   SearchDriver driver(&reader, &filter, start, 1e-6);
+  printf("# 0\n");
   PrintAll(&driver);
   return 0;
 }
