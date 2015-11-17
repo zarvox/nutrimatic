@@ -196,10 +196,6 @@ class Controller(object):
         self.connections[client].start_search(search_string)
         self.update_all_search_count()
 
-    def abort_search_for_client(self, client):
-        self.connections[client].abort_search()
-        self.update_all_search_count()
-
 globalController = Controller()
 
 class SocketHandler(tornado.websocket.WebSocketHandler):
